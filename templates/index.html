@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AURIX — Commodity Relationship Intelligence Engine</title>
+    <meta name="description"
+        content="Research dashboard investigating relative-price divergences between related MCX gold futures contracts.">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <!-- Chart.js for interactive charts -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+
+<body>
+    <!-- Synthetic data disclaimer banner -->
+    <div class="synthetic-banner">
+        <span>Synthetic illustrative data — not real MCX market data.</span>
+    </div>
+
+    <header class="site-header">
+        <div class="header-content">
+            <div class="brand-group">
+                <h1 class="wordmark">AURIX</h1>
+                <span class="prototype-badge">Prototype MVP</span>
+            </div>
+            <p class="subtitle">Commodity Relationship Intelligence Engine</p>
+            <p class="tagline">"Don't just find the signal. Question it."</p>
+        </div>
+        <div class="team-meta">
+            <span>Team: CODEX404</span>
+        </div>
+    </header>
+
+    <main class="dashboard-main">
+
+        <!-- ═══════════════════════════════════════════════════════════════ -->
+        <!-- CONTROLS PANEL -->
+        <!-- ═══════════════════════════════════════════════════════════════ -->
+        <section class="card controls-panel">
+            <div class="section-header">
+                <h2>Interactive Controls</h2>
+                <div class="upload-group">
+                    <label class="btn-upload" for="csvUploadInput">
+                        &#8593; Upload CSV
+                        <input id="csvUploadInput" type="file" accept=".csv" style="display:none">
+                    </label>
+                    <button class="btn-reset" id="btnReset">&#8635; Reset to Sample</button>
+                </div>
+            </div>
+            <div id="uploadError" class="upload-error" style="display:none"></div>
+
+            <div class="controls-grid">
+                <!-- Contract A -->
+                <div class="control-group">
+                    <label for="contractA">Contract A</label>
+                    <select id="contractA">
+                        <option value="goldm" selected>GOLDM (Gold Mini)</option>
+                        <option value="goldten">GOLDTEN (Gold Ten Gram)</option>
+                        <option value="goldguinea">GOLDGUINEA (Gold Guinea)</option>
+                        <option value="goldpetal">GOLDPETAL (Gold Petal)</option>
+                    </select>
+                </div>
+
+                <!-- Contract B -->
+                <div class="control-group">
+                    <label for="contractB">Contract B</label>
+                    <select id="contractB">
+                        <option value="goldm">GOLDM (Gold Mini)</option>
+                        <option value="goldten" selected>GOLDTEN (Gold Ten Gram)</option>
+                        <option value="goldguinea">GOLDGUINEA (Gold Guinea)</option>
+                        <option value="goldpetal">GOLDPETAL (Gold Petal)</option>
+                    </select>
+                </div>
+
+                <!-- Z-Score Threshold -->
+                <div class="control-group">
+                    <label for="thresholdSlider">
+                        Z-Score Threshold: <span id="thresholdVal" class="control-val">2.0</span>&sigma;
+                    </label>
+                    <input id="thresholdSlider" type="range" min="1.0" max="5.0" step="0.1" value="2.0">
+                </div>
+
+                <!-- Min Volume -->
+                <div class="control-group">
+                    <label for="volumeSlider">
+                        Min Volume Filter: <span id="volumeVal" class="control-val">1,000</span>
+                    </label>
+                    <input id="volumeSlider" type="range" min="0" max="10000" step="100" value="1000">
+                </div>
+
+                <!-- Rolling Window -->
+                <div class="control-group control-toggle">
+                    <label for="rollingToggle">Rolling Window (10 days) vs Full History</label>
+                    <div class="toggle-row">
+                        <span class="toggle-label-left">Full</span>
+                        <label class="toggle-switch">
+                            <input id="rollingToggle" type="checkbox">
+                            <span class="toggle-slider"></span>
+                        </label>
+                        <span class="toggle-label-right">Rolling 10</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ═══════════════════════════════════════════════════════════════ -->
+        <!-- MAIN COMPARISON CHART -->
+        <!-- ═══════════════════════════════════════════════════════════════ -->
+        <section class="card chart-section">
+            <div class="section-header">
+                <h2>Normalized Contract Comparison (INR per 10 Grams)</h2>
+                <span class="basis-note">GOLDGUINEA scaled 1.25×, GOLDPETAL scaled 10×</span>
+            </div>
+
+            <div class="chart-container">
+                <canvas id="priceChart"></canvas>
+            </div>
+
+            <div class="chart-legend">
+                <div class="legend-item"><span class="legend-dot gold"></span> GOLDM</div>
+                <div class="legend-item"><span class="legend-dot blue"></span> GOLDTEN</div>
+                <div class="legend-item"><span class="legend-dot teal"></span> GOLDGUINEA (norm.)</div>
+                <div class="legend-item"><span class="legend-dot purple"></span> GOLDPETAL (norm.)</div>
+            </div>
+        </section>
+
+        <!-- ═══════════════════════════════════════════════════════════════ -->
+        <!-- SPREAD CHART -->
+        <!-- ═══════════════════════════════════════════════════════════════ -->
+        <section class="card chart-section">
+            <div class="section-header">
+                <h2 id="spreadChartTitle">Spread Over Time: GOLDM − GOLDTEN (INR/10g)</h2>
+                <span class="basis-note">Mean line &amp; ±threshold dashed bands shown</span>
+            </div>
+            <div class="chart-container chart-container--short">
+                <canvas id="spreadChart"></canvas>
+            </div>
+        </section>
+
+        <!-- ═══════════════════════════════════════════════════════════════ -->
+        <!-- SIGNAL INVESTIGATION + PIPELINE -->
+        <!-- ═══════════════════════════════════════════════════════════════ -->
+        <div class="grid-two-columns">
+
+            <!-- Signal Investigation Panel -->
+            <section class="card investigation-panel">
+                <div class="section-header">
+                    <h2>Signal Investigation</h2>
+                    <span id="statusBadge" class="status-badge normal">Normal</span>
+                </div>
+
+                <div class="metrics-grid">
+                    <div class="metric-item">
+                        <span class="metric-label" id="spreadLabel">Latest GOLDM–GOLDTEN Spread</span>
+                        <span class="metric-value highlight" id="metricSpread">—</span>
+                    </div>
+                    <div class="metric-item">
+                        <span class="metric-label">Historical Average Spread</span>
+                        <span class="metric-value" id="metricMean">—</span>
+                    </div>
+                    <div class="metric-item">
+                        <span class="metric-label">Latest Deviation (Z-Score)</span>
+                        <span class="metric-value" id="metricZScore">—</span>
+                    </div>
+                    <div class="metric-item">
+                        <span class="metric-label">Liquidity Check (Volume)</span>
+                        <span class="metric-value" id="metricVolume">—</span>
+                    </div>
+                </div>
+
+                <div class="conclusion-box">
+                    <h3>Plain-Language Conclusion</h3>
+                    <p id="conclusionText">Loading…</p>
+                </div>
+            </section>
+
+            <!-- Investigation Pipeline -->
+            <section class="card explainability-panel">
+                <div class="section-header">
+                    <h2>Investigation Pipeline</h2>
+                </div>
+                <ol class="steps-list">
+                    <li>
+                        <span class="step-num">01</span>
+                        <div class="step-content">
+                            <strong>Normalize</strong>
+                            <p>Convert contract prices to INR per 10 grams for a fair comparison across different lot
+                                sizes.</p>
+                        </div>
+                    </li>
+                    <li>
+                        <span class="step-num">02</span>
+                        <div class="step-content">
+                            <strong>Detect</strong>
+                            <p>Calculate the chosen relative-price spread for each trading date.</p>
+                        </div>
+                    </li>
+                    <li>
+                        <span class="step-num">03</span>
+                        <div class="step-content">
+                            <strong>Validate</strong>
+                            <p>Compare the latest spread against the historical mean and standard deviation.</p>
+                        </div>
+                    </li>
+                    <li>
+                        <span class="step-num">04</span>
+                        <div class="step-content">
+                            <strong>Filter</strong>
+                            <p>Apply the minimum volume threshold to confirm baseline liquidity before raising alerts.
+                            </p>
+                        </div>
+                    </li>
+                </ol>
+            </section>
+        </div>
+
+        <!-- ═══════════════════════════════════════════════════════════════ -->
+        <!-- "QUESTION IT" PANEL -->
+        <!-- ═══════════════════════════════════════════════════════════════ -->
+        <section class="card question-panel">
+            <div class="section-header">
+                <h2>"Question It" — Signal Sanity Checks</h2>
+                <span id="confidenceBadge" class="confidence-badge">—</span>
+            </div>
+            <ul id="checksList" class="checks-list">
+                <!-- Injected by JS -->
+            </ul>
+            <div class="confidence-box">
+                <p id="confidenceSummary">—</p>
+            </div>
+        </section>
+
+        <!-- ═══════════════════════════════════════════════════════════════ -->
+        <!-- METHOD & DECISION RULE -->
+        <!-- ═══════════════════════════════════════════════════════════════ -->
+        <section class="card method-section">
+            <div class="section-header">
+                <h2>Method &amp; Decision Rule</h2>
+            </div>
+            <div class="method-grid">
+                <div class="method-col">
+                    <h3>Core Mathematical Rule</h3>
+                    <ul>
+                        <li>
+                            <strong>Spread Calculation:</strong>
+                            Spread<sub>t</sub> = Price<sub>A,t</sub> &minus; Price<sub>B,t</sub>
+                        </li>
+                        <li>
+                            <strong>Historical Baseline:</strong>
+                            Mean (&mu;) and Population Std Dev (&sigma;) computed over
+                            the historical observation window (all days before the latest, or
+                            the rolling 10-day window when selected).
+                        </li>
+                        <li>
+                            <strong>Anomaly Trigger:</strong>
+                            |&nbsp;(Spread<sub>t</sub> &minus; &mu;) / &sigma;&nbsp;| &ge; <em>threshold</em>
+                            (default: 2.0&sigma;)
+                        </li>
+                        <li>
+                            <strong>Liquidity Filter:</strong>
+                            Contract A Volume &ge; min volume filter (default: 1,000 units).
+                        </li>
+                    </ul>
+                </div>
+                <div class="method-col">
+                    <h3>Dataset Reference</h3>
+                    <p id="datasetNote">Loaded from <code>sample_gold_data.csv</code>. Displays — historical daily
+                        observations. All statistics recomputed live when controls change.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- ═══════════════════════════════════════════════════════════════ -->
+        <!-- DATA TABLE -->
+        <!-- ═══════════════════════════════════════════════════════════════ -->
+        <section class="card table-section">
+            <div class="section-header">
+                <h2>Historical Observations (Synthetic Dataset)</h2>
+            </div>
+            <div class="table-responsive">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>GOLDM (INR/10g)</th>
+                            <th>GOLDTEN (INR/10g)</th>
+                            <th>GOLDGUINEA (Norm.)</th>
+                            <th>GOLDPETAL (Norm.)</th>
+                            <th id="spreadColHeader">Spread (A−B)</th>
+                            <th>GOLDM Vol</th>
+                        </tr>
+                    </thead>
+                    <tbody id="dataTableBody">
+                        <!-- Populated by JS -->
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+    </main>
+
+    <footer class="site-footer">
+        <p>Research prototype only, Flagged signals are for further research only.</p>
+        <p>AURIX Commodity Relationship Intelligence Engine &bull; Team CODEX404</p>
+    </footer>
+
+    <!-- Seed data from server for first render -->
+    <script>
+        // Server injects initial data; JS takes over from there
+        const SEED_DATA = {{ data | tojson | safe }};
+        const SEED_ANALYSIS = {{ analysis | tojson | safe }};
+    </script>
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+
+</html>
